@@ -1,0 +1,351 @@
+zabbix_export:
+  version: '6.2'
+  date: '2023-02-13T11:45:54Z'
+  template_groups:
+    -
+      uuid: 7df96b18c230490a9a0a9e2307226338
+      name: Templates
+  templates:
+    -
+      uuid: df6938f78ea94f229f5d2940e6b95448
+      template: 'SAP HANA by ODBC'
+      name: 'SAP HANA by ODBC'
+      groups:
+        -
+          name: Templates
+      items:
+        -
+          uuid: 23c8831bbf9340189a1051f1ca919be0
+          name: 'SAP HANA: Get backups'
+          type: ODBC
+          key: 'db.odbc.get[get_backups,,"DRIVER={$HDB.DRIVER};UID={$HDB.USR};PWD={$HDB.PWD};SERVERNODE={HOST.CONN}:{$HDB.PORT};DATABASENAME={$HDB.DATABASE};"]'
+          delay: 0;h0-23
+          history: '0'
+          trends: '0'
+          value_type: TEXT
+          params: |
+            -- BACKUP
+            -- Full/Incr backup
+            select
+            	 'Full/Incr backup status' as METRIC, state_name  as VALUE
+            from ( select
+            	 ROW_NUMBER() over( 
+            		ORDER BY id) as ROW_NUM,
+            	 state_name 
+            	from ( select
+            	 1 as id,
+            	 state_name 
+            		from "PUBLIC"."M_BACKUP_CATALOG" 
+            		where entry_type_name in ('complete data backup',
+            	 'differential',
+            	 'incremental backups', 'incremental data backup') 
+            		and entry_id=(select
+            	 max(entry_id) 
+            			from m_backup_catalog 
+            			where entry_type_name in ('complete data backup',
+            	 'differential',
+            	 'incremental backups','incremental data backup')) 
+            		and sys_start_time>add_days(current_date,
+            	 -2) 
+            		union all select
+            	 2 as id,
+            	 'no_backups' as state_name 
+            		from dummy) ) 
+            where row_num=1
+            UNION
+            -- LOG backup
+            select
+            	 'Log backup status' as METRIC, state_name as VALUE
+            from "PUBLIC"."M_BACKUP_CATALOG" 
+            where entry_type_name in ('log backup') 
+            and entry_id=(select
+            	 max(entry_id) 
+            	from m_backup_catalog 
+            	where entry_type_name in ('log backup'))
+          description: |
+            SQL returns:
+            
+            successful, failed, running, cancel pending, or canceled
+            or
+            no_backups (if no backups last 2 days)
+        -
+          uuid: 38d2767eda134a30ac2d910914575a7a
+          name: 'SAP HANA: Get metrics'
+          type: ODBC
+          key: 'db.odbc.get[get_metrics,,"DRIVER={$HDB.DRIVER};UID={$HDB.USR};PWD={$HDB.PWD};SERVERNODE={HOST.CONN}:{$HDB.PORT};DATABASENAME={$HDB.DATABASE};"]'
+          delay: 0;m0-59
+          history: '0'
+          trends: '0'
+          value_type: TEXT
+          params: |
+            -- Connections
+            select 'Connections' as METRIC, count(*) as VALUE from "PUBLIC"."M_CONNECTIONS" where connection_type = 'Remote'
+            UNION
+            select 'Connections queuing' as METRIC, count(*) as VALUE from "PUBLIC"."M_CONNECTIONS" where connection_type = 'Remote' and connection_status='QUEUING'
+            UNION
+            select 'Connections running' as METRIC, count(*) as VALUE from "PUBLIC"."M_CONNECTIONS" where connection_type = 'Remote' and connection_status='RUNNING'
+            UNION
+            select 'Connections idle' as METRIC, count(*) as VALUE from "PUBLIC"."M_CONNECTIONS" where connection_type = 'Remote' and connection_status='IDLE'
+            -- LOCKS
+            UNION
+            select 'Object locks' as METRIC, count(*) as VALUE from "PUBLIC"."M_OBJECT_LOCKS"
+            -- Storage
+            UNION
+            SELECT 'DB size column store' as METRIC, round(sum(MEMORY_SIZE_IN_TOTAL)) as VALUE  FROM M_CS_TABLES
+            UNION
+            SELECT 'DB size row store' as METRIC, sum(USED_FIXED_PART_SIZE + USED_VARIABLE_PART_SIZE) as VALUE FROM M_RS_TABLES
+            -- Memory
+            UNION
+            select 'Free physical memory' as METRIC, FREE_PHYSICAL_MEMORY as VALUE from M_HOST_RESOURCE_UTILIZATION
+            UNION
+            select 'Used physical memory' as METRIC, USED_PHYSICAL_MEMORY as VALUE from M_HOST_RESOURCE_UTILIZATION
+        -
+          uuid: f31f4871e35a42c5b13c0eff0af6add5
+          name: Connections
+          type: DEPENDENT
+          key: hdb.connections
+          delay: '0'
+          description: 'Number of remote connections to SAP HANA database'
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - '$[?(@.METRIC==''Connections'')].VALUE.first()'
+          master_item:
+            key: 'db.odbc.get[get_metrics,,"DRIVER={$HDB.DRIVER};UID={$HDB.USR};PWD={$HDB.PWD};SERVERNODE={HOST.CONN}:{$HDB.PORT};DATABASENAME={$HDB.DATABASE};"]'
+          tags:
+            -
+              tag: Application
+              value: 'HDB Performance'
+        -
+          uuid: 16f2b35ade7749e79a005427f41baf5b
+          name: 'Connections idle'
+          type: DEPENDENT
+          key: hdb.conn_idle
+          delay: '0'
+          description: 'Number of idle connections in SAP HANA database'
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - '$[?(@.METRIC==''Connections idle'')].VALUE.first()'
+          master_item:
+            key: 'db.odbc.get[get_metrics,,"DRIVER={$HDB.DRIVER};UID={$HDB.USR};PWD={$HDB.PWD};SERVERNODE={HOST.CONN}:{$HDB.PORT};DATABASENAME={$HDB.DATABASE};"]'
+          tags:
+            -
+              tag: Application
+              value: 'HDB Performance'
+        -
+          uuid: 3f650823feff4e09bccbfd79ca089720
+          name: 'Connections queuing'
+          type: DEPENDENT
+          key: hdb.conn_queuing
+          delay: '0'
+          description: 'Number of queuing connections in SAP HANA database'
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - '$[?(@.METRIC==''Connections queuing'')].VALUE.first()'
+          master_item:
+            key: 'db.odbc.get[get_metrics,,"DRIVER={$HDB.DRIVER};UID={$HDB.USR};PWD={$HDB.PWD};SERVERNODE={HOST.CONN}:{$HDB.PORT};DATABASENAME={$HDB.DATABASE};"]'
+          tags:
+            -
+              tag: Application
+              value: 'HDB Performance'
+        -
+          uuid: fc4db49f2992419ca480d8284cf16381
+          name: 'Connections running'
+          type: DEPENDENT
+          key: hdb.conn_running
+          delay: '0'
+          description: 'Number of running connections in SAP HANA database'
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - '$[?(@.METRIC==''Connections running'')].VALUE.first()'
+          master_item:
+            key: 'db.odbc.get[get_metrics,,"DRIVER={$HDB.DRIVER};UID={$HDB.USR};PWD={$HDB.PWD};SERVERNODE={HOST.CONN}:{$HDB.PORT};DATABASENAME={$HDB.DATABASE};"]'
+          tags:
+            -
+              tag: Application
+              value: 'HDB Performance'
+        -
+          uuid: f9361ca9100f4ff8a8f6efe06309a3ec
+          name: 'Full/Incr backup status'
+          type: DEPENDENT
+          key: hdb.fi_bkp_state
+          delay: '0'
+          trends: '0'
+          value_type: CHAR
+          description: |
+            SQL returns:
+            
+            successful, failed, running, cancel pending, or canceled
+            or
+            no_backups (if no backups last 2 days)
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - '$[?(@.METRIC==''Full/Incr backup status'')].VALUE.first()'
+          master_item:
+            key: 'db.odbc.get[get_backups,,"DRIVER={$HDB.DRIVER};UID={$HDB.USR};PWD={$HDB.PWD};SERVERNODE={HOST.CONN}:{$HDB.PORT};DATABASENAME={$HDB.DATABASE};"]'
+          tags:
+            -
+              tag: Application
+              value: 'HDB Backup'
+          triggers:
+            -
+              uuid: 2838350df8974919bd8c65000075181a
+              expression: 'find(/SAP HANA by ODBC/hdb.fi_bkp_state,,"regexp","failed")=1'
+              name: 'Full/Incr backup failed on {HOST.NAME}'
+              priority: HIGH
+            -
+              uuid: ed94804bfd21445b80d7c9d012a38129
+              expression: 'find(/SAP HANA by ODBC/hdb.fi_bkp_state,,"regexp","no_backups")=1'
+              name: 'No Full/Incr backup too long on {HOST.NAME}'
+              priority: HIGH
+        -
+          uuid: 4ff42a9a2b294813ae1722e66841f7f4
+          name: 'Free physical memory'
+          type: DEPENDENT
+          key: hdb.free_phys_mem
+          delay: '0'
+          units: B
+          description: 'HDB free physical memory'
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - '$[?(@.METRIC==''Free physical memory'')].VALUE.first()'
+          master_item:
+            key: 'db.odbc.get[get_metrics,,"DRIVER={$HDB.DRIVER};UID={$HDB.USR};PWD={$HDB.PWD};SERVERNODE={HOST.CONN}:{$HDB.PORT};DATABASENAME={$HDB.DATABASE};"]'
+          tags:
+            -
+              tag: Application
+              value: 'HDB Memory'
+        -
+          uuid: 0fa644dffbf549a9a33c46247fd69830
+          name: 'Log backup status'
+          type: DEPENDENT
+          key: hdb.log_bkp_state
+          delay: '0'
+          trends: '0'
+          value_type: CHAR
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - '$[?(@.METRIC==''Log backup status'')].VALUE.first()'
+          master_item:
+            key: 'db.odbc.get[get_backups,,"DRIVER={$HDB.DRIVER};UID={$HDB.USR};PWD={$HDB.PWD};SERVERNODE={HOST.CONN}:{$HDB.PORT};DATABASENAME={$HDB.DATABASE};"]'
+          tags:
+            -
+              tag: Application
+              value: 'HDB Backup'
+          triggers:
+            -
+              uuid: 07f71270a3d34fd8bd4e8d7859c8419e
+              expression: 'find(/SAP HANA by ODBC/hdb.log_bkp_state,,"regexp","failed")=1'
+              name: 'Log backup failed on {HOST.NAME}'
+              priority: HIGH
+            -
+              uuid: 2357966fdcf14728a1bc0231944c27c7
+              expression: 'find(/SAP HANA by ODBC/hdb.log_bkp_state,,"regexp","no_backups")=1'
+              name: 'No Log backup too long on {HOST.NAME}'
+              priority: HIGH
+        -
+          uuid: 9d9e737ba7d041478cb53dfcd9587c79
+          name: 'Object locks'
+          type: DEPENDENT
+          key: hdb.obj_locks
+          delay: '0'
+          description: 'Number of object locks in SAP HANA database'
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - '$[?(@.METRIC==''Object locks'')].VALUE.first()'
+          master_item:
+            key: 'db.odbc.get[get_metrics,,"DRIVER={$HDB.DRIVER};UID={$HDB.USR};PWD={$HDB.PWD};SERVERNODE={HOST.CONN}:{$HDB.PORT};DATABASENAME={$HDB.DATABASE};"]'
+          tags:
+            -
+              tag: Application
+              value: 'HDB Performance'
+        -
+          uuid: b4cc444105ef4a40b6c1995df895ecbb
+          name: 'DB size column store'
+          type: DEPENDENT
+          key: hdb.size_cs
+          delay: '0'
+          units: B
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - '$[?(@.METRIC==''DB size column store'')].VALUE.first()'
+          master_item:
+            key: 'db.odbc.get[get_metrics,,"DRIVER={$HDB.DRIVER};UID={$HDB.USR};PWD={$HDB.PWD};SERVERNODE={HOST.CONN}:{$HDB.PORT};DATABASENAME={$HDB.DATABASE};"]'
+          tags:
+            -
+              tag: Application
+              value: 'HDB Storage'
+        -
+          uuid: 2e0ebaa5937147ccbbf77da2d5963c04
+          name: 'DB size row store'
+          type: DEPENDENT
+          key: hdb.size_rs
+          delay: '0'
+          units: B
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - '$[?(@.METRIC==''DB size row store'')].VALUE.first()'
+          master_item:
+            key: 'db.odbc.get[get_metrics,,"DRIVER={$HDB.DRIVER};UID={$HDB.USR};PWD={$HDB.PWD};SERVERNODE={HOST.CONN}:{$HDB.PORT};DATABASENAME={$HDB.DATABASE};"]'
+          tags:
+            -
+              tag: Application
+              value: 'HDB Storage'
+        -
+          uuid: 86cad40fa5c94fd1b3e60055c7b9c488
+          name: 'Used physical memory'
+          type: DEPENDENT
+          key: hdb.used_phys_mem
+          delay: '0'
+          status: DISABLED
+          units: B
+          description: 'HDB used physical memory'
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - '$[?(@.METRIC==''Used physical memory'')].VALUE.first()'
+          master_item:
+            key: 'db.odbc.get[get_metrics,,"DRIVER={$HDB.DRIVER};UID={$HDB.USR};PWD={$HDB.PWD};SERVERNODE={HOST.CONN}:{$HDB.PORT};DATABASENAME={$HDB.DATABASE};"]'
+          tags:
+            -
+              tag: Application
+              value: 'HDB Memory'
+      macros:
+        -
+          macro: '{$DSN}'
+          value: HDB
+        -
+          macro: '{$HDB.DATABASE}'
+          value: HDB
+        -
+          macro: '{$HDB.DRIVER}'
+          value: HDBDriver
+        -
+          macro: '{$HDB.PORT}'
+          value: '30015'
+        -
+          macro: '{$HDB.PWD}'
+          value: secret
+        -
+          macro: '{$HDB.USR}'
+          value: ZABBIX
